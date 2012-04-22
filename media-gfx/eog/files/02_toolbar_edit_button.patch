@@ -1,0 +1,246 @@
+Subject: [PATCH 1/2] Bug 609958 - add "Edit Image" toolbar button
+
+Add a conditionally-enabled "Edit Image" toolbar button.  The toolbar is
+only enabled if a specific image editor is specified in GConf.
+Index: eog-2.31.92/configure.ac
+===================================================================
+--- eog-2.31.92.orig/configure.ac	2010-09-20 12:53:11.688736001 +0200
++++ eog-2.31.92/configure.ac	2010-09-20 12:53:11.704736001 +0200
+@@ -96,6 +96,7 @@
+ EOG_MODULES="gtk+-2.0 >= $GTK_REQUIRED \
+              glib-2.0 >= $GLIB_REQUIRED \
+              gio-2.0 >= $GLIB_REQUIRED \
++             gio-unix-2.0 >= $GLIB_REQUIRED \
+              gthread-2.0 >= $GLIB_REQUIRED \
+              gnome-desktop-2.0 >= $GNOME_DESKTOP_REQUIRED \
+              gdk-pixbuf-2.0 >= $GDKPIXBUF_REQUIRED \
+Index: eog-2.31.92/data/eog.schemas.in
+===================================================================
+--- eog-2.31.92.orig/data/eog.schemas.in	2010-09-11 00:19:10.000000000 +0200
++++ eog-2.31.92/data/eog.schemas.in	2010-09-20 12:53:11.704736001 +0200
+@@ -283,6 +283,20 @@
+     </schema>
+ 
+     <schema>
++      <key>/schemas/apps/eog/ui/external_editor</key>
++      <applyto>/apps/eog/ui/external_editor</applyto>
++      <owner>eog</owner>
++      <type>string</type>
++      <default>shotwell-viewer.desktop</default>
++      <locale name="C">
++        <short>External program to use for editing images</short>
++        <long>The desktop file name (including the ".desktop") of the application to use for
++        editing images (when the "Edit Image" toolbar button is clicked).  Set to the empty
++        string to disable this feature.</long>
++      </locale>
++    </schema>
++
++    <schema>
+       <key>/schemas/apps/eog/plugins/active_plugins</key>
+       <applyto>/apps/eog/plugins/active_plugins</applyto>
+       <owner>eog</owner>
+Index: eog-2.31.92/data/eog-toolbar.xml
+===================================================================
+--- eog-2.31.92.orig/data/eog-toolbar.xml	2010-09-11 00:19:10.000000000 +0200
++++ eog-2.31.92/data/eog-toolbar.xml	2010-09-20 12:53:11.704736001 +0200
+@@ -31,5 +31,7 @@
+     <separator/>
+     <toolitem name="EditRotate270"/>
+     <toolitem name="EditRotate90"/>
++    <separator/>
++    <toolitem name="OpenEditor"/>
+  </toolbar>
+ </toolbars>
+Index: eog-2.31.92/src/eog-config-keys.h
+===================================================================
+--- eog-2.31.92.orig/src/eog-config-keys.h	2010-09-11 00:19:10.000000000 +0200
++++ eog-2.31.92/src/eog-config-keys.h	2010-09-20 12:53:11.708736001 +0200
+@@ -57,6 +57,7 @@
+ #define EOG_CONF_UI_DISABLE_TRASH_CONFIRMATION	"/apps/eog/ui/disable_trash_confirmation"
+ #define EOG_CONF_UI_FILECHOOSER_XDG_FALLBACK	"/apps/eog/ui/filechooser_xdg_fallback"
+ #define EOG_CONF_UI_PROPSDIALOG_NETBOOK_MODE	"/apps/eog/ui/propsdialog_netbook_mode"
++#define EOG_CONF_UI_EXTERNAL_EDITOR		"/apps/eog/ui/external_editor"
+ 
+ #define EOG_CONF_PLUGINS_ACTIVE_PLUGINS         "/apps/eog/plugins/active_plugins"
+ 
+Index: eog-2.31.92/src/eog-window.c
+===================================================================
+--- eog-2.31.92.orig/src/eog-window.c	2010-09-20 12:53:11.692736001 +0200
++++ eog-2.31.92/src/eog-window.c	2010-09-20 12:53:11.708736001 +0200
+@@ -64,6 +64,7 @@
+ #include <glib/gi18n.h>
+ #include <gio/gio.h>
+ #include <gdk/gdkkeysyms.h>
++#include <gio-unix-2.0/gio/gdesktopappinfo.h>
+ #include <gtk/gtk.h>
+ #include <gconf/gconf-client.h>
+ #include <launchpad-integration.h>
+@@ -222,6 +223,7 @@
+ static void eog_window_set_wallpaper (EogWindow *window, const gchar *filename, const gchar *visible_filename);
+ static gboolean eog_window_save_images (EogWindow *window, GList *images);
+ static void eog_window_finish_saving (EogWindow *window);
++static GAppInfo *get_appinfo_for_editor (EogWindow *window);
+ 
+ static GQuark
+ eog_window_error_quark (void)
+@@ -1236,6 +1238,8 @@
+ static void
+ eog_window_update_openwith_menu (EogWindow *window, EogImage *image)
+ {
++	gboolean edit_button_active;
++	GAppInfo *editor_app;
+ 	GFile *file;
+ 	GFileInfo *file_info;
+ 	GList *iter;
+@@ -1251,6 +1255,9 @@
+ 
+ 	priv = window->priv;
+ 
++	edit_button_active = FALSE;
++	editor_app = get_appinfo_for_editor (window);
++
+ 	file = eog_image_get_file (image);
+ 	file_info = g_file_query_info (file,
+ 				       G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+@@ -1293,6 +1300,10 @@
+                 GAppInfo *app = iter->data;
+                 gchar name[64];
+ 
++                if (g_app_info_equal (editor_app, app)) {
++                        edit_button_active = TRUE;
++                }
++
+                 /* Do not include eog itself */
+                 if (g_ascii_strcasecmp (g_app_info_get_executable (app),
+                                         g_get_prgname ()) == 0) {
+@@ -1380,6 +1391,12 @@
+         }
+ 
+         g_list_free (apps);
++
++        action = gtk_action_group_get_action (window->priv->actions_image,
++                                              "OpenEditor");
++        if (action != NULL) {
++                gtk_action_set_sensitive (action, edit_button_active);
++        }
+ }
+ 
+ static void
+@@ -4384,6 +4401,108 @@
+ 	} while (priv->save_job != NULL);
+ }
+ 
++static GAppInfo *
++get_appinfo_for_editor (EogWindow *window)
++{
++	/* We want this function to always return the same thing, not
++	 * just for performance reasons, but because if someone edits
++	 * GConf while eog is running, the application could get into an
++	 * inconsistent state.  If the editor exists once, it gets added
++	 * to the "available" list of the EggToolbarsModel (for which
++	 * there is no API to remove it).  If later the editor no longer
++	 * existed when constructing a new window, we'd be unable to
++	 * construct a GtkAction for the editor for that window, causing
++	 * assertion failures when viewing the "Edit Toolbars" dialog
++	 * (item is available, but can't find the GtkAction for it).
++	 *
++	 * By ensuring we keep the GAppInfo around, we avoid the
++	 * possibility of that situation occuring.
++	 */
++	static GDesktopAppInfo *app_info = NULL;
++	static gboolean initialised;
++
++	if (!initialised) {
++		gchar *editor;
++
++		editor = gconf_client_get_string (window->priv->client,
++		                                  EOG_CONF_UI_EXTERNAL_EDITOR, NULL);
++
++		if (editor != NULL) {
++			app_info = g_desktop_app_info_new (editor);
++		}
++
++		initialised = TRUE;
++		g_free (editor);
++	}
++
++	return (GAppInfo *) app_info;
++}
++
++static void
++eog_window_open_editor (GtkAction *action,
++                        EogWindow *window)
++{
++	GdkAppLaunchContext *context;
++	GAppInfo *app_info;
++	GList files;
++
++	app_info = get_appinfo_for_editor (window);
++
++	if (app_info == NULL)
++		return;
++
++	context = gdk_app_launch_context_new ();
++	gdk_app_launch_context_set_screen (context,
++	  gtk_widget_get_screen (GTK_WIDGET (window)));
++	gdk_app_launch_context_set_icon (context,
++	  g_app_info_get_icon (app_info));
++	gdk_app_launch_context_set_timestamp (context,
++	  gtk_get_current_event_time ());
++
++	{
++		GList f = { eog_image_get_file (window->priv->image) };
++		files = f;
++	}
++
++	g_app_info_launch (app_info, &files,
++                           G_APP_LAUNCH_CONTEXT (context), NULL);
++
++	g_object_unref (files.data);
++	g_object_unref (context);
++}
++
++static void
++eog_window_add_open_editor_action (EogWindow *window)
++{
++        EggToolbarsModel *model;
++	GAppInfo *app_info;
++	GtkAction *action;
++        gchar *tooltip;
++
++	app_info = get_appinfo_for_editor (window);
++
++	if (app_info == NULL)
++		return;
++
++	model = eog_application_get_toolbars_model (EOG_APP);
++	egg_toolbars_model_set_name_flags (model, "OpenEditor",
++	                                   EGG_TB_MODEL_NAME_KNOWN);
++
++	tooltip = g_strdup_printf (_("Edit the current image using %s"),
++	                           g_app_info_get_name (app_info));
++	action = gtk_action_new ("OpenEditor", _("Edit Image"), tooltip, NULL);
++	gtk_action_set_gicon (action, g_app_info_get_icon (app_info));
++	gtk_action_set_is_important (action, TRUE);
++
++	g_signal_connect (action, "activate",
++	                  G_CALLBACK (eog_window_open_editor), window);
++
++	gtk_action_group_add_action (window->priv->actions_image, action);
++
++	g_object_unref (action);
++	g_free (tooltip);
++}
++
+ static void
+ eog_window_construct_ui (EogWindow *window)
+ {
+@@ -4435,6 +4554,8 @@
+ 				      G_N_ELEMENTS (action_entries_image),
+ 				      window);
+ 
++	eog_window_add_open_editor_action (window);
++
+ 	gtk_action_group_add_toggle_actions (priv->actions_image,
+ 					     toggle_entries_image,
+ 					     G_N_ELEMENTS (toggle_entries_image),

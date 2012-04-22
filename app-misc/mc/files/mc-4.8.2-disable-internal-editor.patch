@@ -1,0 +1,19 @@
+Last-Update: 2012-02-24
+Reviewed-by: Dmitry Smirnov <onlyjob@member.fsf.org>
+Forwarded: no
+Bug-Debian: http://bugs.debian.org/413258
+Author: Patrick Winnertz <winnie@debian.org>
+Description: Disable internal editor by default
+
+
+--- a/src/main.c
++++ b/src/main.c
+@@ -94,7 +94,7 @@
+ /* If true use the internal viewer */
+ int use_internal_view = 1;
+ /* If set, use the builtin editor */
+-int use_internal_edit = 1;
++int use_internal_edit = 0;
+ 
+ char *mc_run_param0 = NULL;
+ char *mc_run_param1 = NULL;

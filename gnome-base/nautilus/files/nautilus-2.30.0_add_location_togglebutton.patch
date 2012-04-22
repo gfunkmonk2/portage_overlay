@@ -1,0 +1,102 @@
+diff -r -u a/src/nautilus-navigation-window-pane.c b/src/nautilus-navigation-window-pane.c
+--- a/src/nautilus-navigation-window-pane.c	2010-03-10 22:28:38.000000000 +0900
++++ b/src/nautilus-navigation-window-pane.c	2010-04-18 22:05:10.819519164 +0900
+@@ -607,12 +607,32 @@
+ 	}
+ }
+ 
++static gboolean
++location_button_should_be_active (NautilusNavigationWindowPane *window)
++{
++	return eel_preferences_get_boolean (NAUTILUS_PREFERENCES_ALWAYS_USE_LOCATION_ENTRY);
++}
++
++static void
++location_button_toggled_cb (GtkToggleButton *toggle,
++			    NautilusNavigationWindowPane *pane)
++{
++	gboolean is_active;
++
++	is_active = gtk_toggle_button_get_active (toggle);
++	eel_preferences_set_boolean (NAUTILUS_PREFERENCES_ALWAYS_USE_LOCATION_ENTRY, is_active);
++
++	if (is_active) {
++		nautilus_navigation_bar_activate (NAUTILUS_NAVIGATION_BAR (pane->navigation_bar));
++	}
++}
++
+ void
+ nautilus_navigation_window_pane_setup (NautilusNavigationWindowPane *pane)
+ {
+ 	GtkWidget *hbox;
+ 	NautilusEntry *entry;
+-	GtkSizeGroup *header_size_group;
++	/* GtkSizeGroup *header_size_group; */
+ 
+ 	pane->widget = gtk_vbox_new (FALSE, 0);
+ 
+@@ -623,10 +643,33 @@
+ 			    FALSE, FALSE, 0);
+ 	gtk_widget_show (hbox);
+ 
+-	header_size_group = NAUTILUS_NAVIGATION_WINDOW (NAUTILUS_WINDOW_PANE (pane)->window)->details->header_size_group;
++	{
++		GtkWidget *image;
++		GtkWidget *button;
++
++		image = gtk_image_new_from_stock (GTK_STOCK_EDIT, GTK_ICON_SIZE_BUTTON);
++		gtk_widget_show (image);
++
++		button = g_object_new (GTK_TYPE_TOGGLE_BUTTON,
++				       "image", image,
++				       "focus-on-click", FALSE,
++				       "active", location_button_should_be_active (pane),
++				       NULL);
++
++		gtk_widget_set_tooltip_text (button,
++					     _("Toggle between button and text-based location bar"));
++
++		g_signal_connect (button, "toggled",
++				  G_CALLBACK (location_button_toggled_cb), pane);
++		pane->always_use_location_entry_toggle_button =  button;
++		gtk_box_pack_start (GTK_BOX (hbox), pane->always_use_location_entry_toggle_button, FALSE, FALSE, 0);
++		gtk_widget_show (pane->always_use_location_entry_toggle_button);
++	}
++
++	/* header_size_group = NAUTILUS_NAVIGATION_WINDOW (NAUTILUS_WINDOW_PANE (pane)->window)->details->header_size_group; */
+ 
+ 	pane->path_bar = g_object_new (NAUTILUS_TYPE_PATH_BAR, NULL);
+-	gtk_size_group_add_widget (header_size_group, pane->path_bar);
++	/* gtk_size_group_add_widget (header_size_group, pane->path_bar); */
+ 	gtk_widget_show (pane->path_bar);
+ 
+ 	g_signal_connect_object (pane->path_bar, "path_clicked",
+@@ -639,7 +682,7 @@
+ 			    TRUE, TRUE, 0);
+ 
+ 	pane->navigation_bar = nautilus_location_bar_new (pane);
+-	gtk_size_group_add_widget (header_size_group, pane->navigation_bar);
++	/* gtk_size_group_add_widget (header_size_group, pane->navigation_bar); */
+ 	g_signal_connect_object (pane->navigation_bar, "location_changed",
+ 				 G_CALLBACK (navigation_bar_location_changed_callback), pane, 0);
+ 	g_signal_connect_object (pane->navigation_bar, "cancel",
+@@ -653,7 +696,7 @@
+ 			    TRUE, TRUE, 0);
+ 
+ 	pane->search_bar = nautilus_search_bar_new ();
+-	gtk_size_group_add_widget (header_size_group, pane->search_bar);
++	/* gtk_size_group_add_widget (header_size_group, pane->search_bar); */
+ 	g_signal_connect_object (pane->search_bar, "activate",
+ 				 G_CALLBACK (search_bar_activate_callback), pane, 0);
+ 	g_signal_connect_object (pane->search_bar, "cancel",
+diff -r -u a/src/nautilus-navigation-window-pane.h b/src/nautilus-navigation-window-pane.h
+--- a/src/nautilus-navigation-window-pane.h	2010-01-23 00:45:17.000000000 +0900
++++ b/src/nautilus-navigation-window-pane.h	2010-04-18 18:33:35.087244331 +0900
+@@ -48,6 +48,7 @@
+ 	GtkWidget *widget;
+ 
+ 	/* location bar */
++	GtkWidget *always_use_location_entry_toggle_button;
+ 	GtkWidget *location_bar;
+ 	GtkWidget *navigation_bar;
+ 	GtkWidget *path_bar;
